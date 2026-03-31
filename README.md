@@ -36,38 +36,59 @@ A multithreaded elevator simulation written in C++20. Two background threads —
 
 ## Building
 
-**With g++ (MinGW / MSYS2 / Linux / macOS):**
-```bash
-g++ -std=c++20 -O2 -o elevatorsim main.cpp -lpthread
-```
+Requires CMake 3.20+ and a compiler with C++20 support (GCC 10+, Clang 11+, MSVC 2019+).
 
-**With CMake:**
 ```bash
 mkdir build && cd build
 cmake ..
 cmake --build .
 ```
 
-Requires a compiler with C++20 support (GCC 10+, Clang 11+, MSVC 2019+).
+The first configure will fetch Google Test automatically.
 
 ## Running
 
-```
+```bash
 ./elevatorsim
 ```
 
 ```
-elevatorsim, elevator starts at floor 1
+elevatorsim — elevator starts at floor 1
 
   Commands:
     go <floor>   send the elevator to <floor>  (e.g. 'go 5')
-    <floor>      shorthand for 'go <floor>'    (e.g. '5')
+    <floor>      shorthand for go              (e.g. '5')
     status       show current elevator state
     help         show this message
     quit         shut down and exit
 
 >
 ```
+
+## Tests
+
+```bash
+cd build
+ctest --output-on-failure
+```
+
+Or directly for verbose output:
+
+```bash
+./elevator_tests
+```
+
+The test suite covers:
+
+| Test | What it checks |
+|------|----------------|
+| `DefaultConstruction` | Struct initialises to correct defaults |
+| `DispatchesImmediatelyWhenIdle` | Idle elevator gets an immediate target, nothing queued |
+| `QueuesWhenElevatorIsBusy` | Busy elevator pushes request onto the queue |
+| `ReachesSingleRequestedFloor` | Full movement + door cycle lands at the requested floor |
+| `ServesMultipleFloorsInOrder` | Queue drains correctly across multiple stops |
+| `GracefulShutdownUnblocksThreads` | `shutdown()` unblocks idle threads so joins don't hang |
+| `DoorsNeverOpenBetweenFloors` | Polls state during travel, fails if doors open mid-transit |
 
 ## Example session
 
@@ -87,7 +108,7 @@ elevatorsim, elevator starts at floor 1
 [MOVE] floor 4
 [MOVE] arrived at floor 4
 [DOOR] opening at floor 4
-[DOOR] closing  at floor 4
+[DOOR] closing at floor 4
 [DOOR] next target to floor 7
 [MOVE] floor 5
 > quit
@@ -101,7 +122,11 @@ Goodbye.
 
 ```
 elevatorsim/
-├── main.cpp        # entire simulation (~290 lines)
-├── CMakeLists.txt  # build definition
+├── elevator.h          # Elevator struct + public API declarations
+├── elevator.cpp        # Thread logic, dispatcher, shutdown
+├── main.cpp            # Interactive CLI
+├── CMakeLists.txt      # Build definition (fetches Google Test)
+├── tests/
+│   └── test_elevator.cpp
 └── README.md
 ```

@@ -1,1 +1,21 @@
+# Build output
+build/
+
+# Compiled binaries
 *.exe
+*.out
+*.o
+*.a
+*.lib
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+
+# IDE
+.vscode/
+.idea/
+*.user
