@@ -256,7 +256,7 @@ int main()
             }
             catch (...)
             {
-                print("  Unknown command '" + cmd + "'. Type 'help' for usage.");
+                print("Unknown command '" + cmd + "'. Type 'help' for usage.");
             }
         }
 
