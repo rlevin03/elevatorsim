@@ -1,4 +1,4 @@
-# elevatorsim
+# Elevator Simulator
 
 A multithreaded elevator simulation written in C++20. Two background threads — one for movement, one for doors — run concurrently and are kept in sync using mutexes and condition variables from the C++ standard library. A live command prompt lets you send the elevator to any floor while the simulation is running.
 
