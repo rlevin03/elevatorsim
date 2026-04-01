@@ -28,7 +28,8 @@ The controller serialises elevator state as a newline-delimited text protocol (`
 Requires CMake 3.20+ and a compiler with C++20 support (GCC 10+, Clang 11+, MSVC 2019+).
 
 ```bash
-mkdir build && cd build
+mkdir build
+cd build
 cmake ..
 cmake --build .
 ```
