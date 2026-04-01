@@ -1,42 +1,59 @@
 #pragma once
 
-#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <queue>
 #include <string>
 
-struct Elevator
-{
-    int  current_floor   = 1;
-    int  target_floor    = 1;
-    bool door_open       = false;
+enum class DoorState { CLOSED, OPENING, OPEN, CLOSING };
+
+inline const char* door_state_cstr(DoorState s) {
+    switch (s) {
+        case DoorState::CLOSED:  return "CLOSED";
+        case DoorState::OPENING: return "OPENING";
+        case DoorState::OPEN:    return "OPEN";
+        case DoorState::CLOSING: return "CLOSING";
+    }
+    return "";
+}
+
+struct Elevator {
+    int       current_floor = 1;
+    int       target_floor  = 1;
+    DoorState door_state    = DoorState::CLOSED;
+
     bool at_target       = false; // set by movement thread on arrival, cleared by door thread
+    bool hold_requested  = false;
+    bool close_requested = false;
     bool running         = true;
 
-    // Configurable per-instance so tests can use short durations.
-    int door_open_ms    = 2000;
-    int floor_travel_ms =  400;
+    // Timing in ms — override in tests for short durations.
+    int floor_travel_ms = 2000;
+    int door_open_ms    = 1000;
+    int door_stay_ms    = 5000;
+    int door_close_ms   = 3000;
 
-    // Suppress console output (set to true in tests).
     bool silent = false;
 
     std::queue<int>         requests;
     std::mutex              mtx;
-    std::condition_variable cv_move; // wakes movement thread
-    std::condition_variable cv_door; // wakes door thread
-    std::condition_variable cv_idle; // wakes main when queue is drained
+    std::condition_variable cv_move;    // wakes movement thread
+    std::condition_variable cv_door;    // wakes door thread on arrival
+    std::condition_variable cv_hold;    // wakes door thread on hold/close signal
+    std::condition_variable cv_idle;    // wakes waiters when queue is drained
+    std::condition_variable cv_changed; // notified on any state change
 };
 
-void run_movement(Elevator &e);
-void run_door(Elevator &e);
+void run_movement(Elevator& e);
+void run_door(Elevator& e);
 
-// If idle, dispatch immediately. Otherwise push to queue for door thread to pick up.
-void request_floor(Elevator &e, int floor);
+void request_floor(Elevator& e, int floor);
+void hold_door(Elevator& e);
+void close_door(Elevator& e);
+void shutdown(Elevator& e);
 
-// Set running=false and unblock all waiting threads. Caller must join threads after.
-void shutdown(Elevator &e);
+// Takes its own lock — do not call while holding e.mtx.
+std::string format_state(Elevator& e);
 
-// Thread-safe output helpers used by the simulation and the UI.
-void elevator_log(const char *who, const std::string &msg, const Elevator &e);
-void elevator_print(const std::string &msg);
+void elevator_log(const char* who, const std::string& msg, const Elevator& e);
+void elevator_print(const std::string& msg);

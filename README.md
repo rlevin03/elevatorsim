@@ -1,32 +1,21 @@
 # Elevator Simulator
 
-A multithreaded elevator simulation written in C++20. Two background threads — one for movement, one for doors — run concurrently and are kept in sync using mutexes and condition variables from the C++ standard library. A live command prompt lets you send the elevator to any floor while the simulation is running.
+A multithreaded elevator simulation written in C++20, split across two communicating processes. The controller runs the simulation and accepts commands; the display renders a live ASCII view of the elevator shaft.
 
-## How it works
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    main thread                      │
-│              interactive command loop               │
-└────────────────────┬────────────────────────────────┘
-                     │ request_floor()
-          ┌──────────▼──────────┐
-          │    shared state     │
-          │  (Elevator struct)  │
-          │  mutex + 3 CVs      │
-          └──────┬──────────────┘
-                 │                    │
-    ┌────────────▼──────┐   ┌─────────▼──────────┐
-    │  movement thread  │   │    door thread      │
-    │                   │   │                     │
-    │  waits: doors     │   │  waits: elevator    │
-    │  closed + new     │◄──►  signals arrival    │
-    │  target           │   │                     │
-    │  moves 1 floor    │   │  opens doors (2s)   │
-    │  per tick (400ms) │   │  closes doors       │
-    └───────────────────┘   │  loads next request │
-                            └─────────────────────┘
+  elevator_controller              elevator_display
+  ┌──────────────────┐             ┌──────────────────┐
+  │  movement thread │             │                  │
+  │  door thread     │  TCP IPC    │  recv thread     │
+  │  broadcast thread├────────────►│  (render loop)   │
+  │  client thread   │  port 54321 │                  │
+  │  stdin thread    │             └──────────────────┘
+  └──────────────────┘
 ```
+
+The controller serialises elevator state as a newline-delimited text protocol (`FLOOR=X|TARGET=Y|DOOR=Z|QUEUE=a,b\n`) and streams it to the display whenever the state changes.
 
 **Invariants enforced:**
 - The elevator never moves while doors are open
@@ -48,21 +37,25 @@ The first configure will fetch Google Test automatically.
 
 ## Running
 
+Start the controller first, then the display in a second terminal.
+
+**Terminal 1 — controller:**
 ```bash
-./elevatorsim
+./elevator_controller
 ```
 
+**Terminal 2 — display:**
+```bash
+./elevator_display
 ```
-elevatorsim — elevator starts at floor 1
 
-  Commands:
-    go <floor>   send the elevator to <floor>  (e.g. 'go 5')
-    <floor>      shorthand for go              (e.g. '5')
-    status       show current elevator state
-    help         show this message
-    quit         shut down and exit
+The display will connect automatically and render the elevator shaft. All commands are entered in the controller terminal:
 
->
+```
+  go <floor>  /  <floor>    request a floor
+  hold        /  h          hold door open
+  close       /  c          close door now
+  quit        /  q          exit
 ```
 
 ## Tests
@@ -78,8 +71,6 @@ Or directly for verbose output:
 ./elevator_tests
 ```
 
-The test suite covers:
-
 | Test | What it checks |
 |------|----------------|
 | `DefaultConstruction` | Struct initialises to correct defaults |
@@ -89,44 +80,17 @@ The test suite covers:
 | `ServesMultipleFloorsInOrder` | Queue drains correctly across multiple stops |
 | `GracefulShutdownUnblocksThreads` | `shutdown()` unblocks idle threads so joins don't hang |
 | `DoorsNeverOpenBetweenFloors` | Polls state during travel, fails if doors open mid-transit |
-
-## Example session
-
-```
-> 4
-[MOVE] dispatching to floor 4
-> 7
-[MAIN] queued to floor 7  (queue depth: 1)
-> status
-
-  Current floor : 2
-  Target floor  : 4
-  Doors         : closed
-  Queue         : 7
-
-> [MOVE] floor 3
-[MOVE] floor 4
-[MOVE] arrived at floor 4
-[DOOR] opening at floor 4
-[DOOR] closing at floor 4
-[DOOR] next target to floor 7
-[MOVE] floor 5
-> quit
-Shutting down...
-[MOVE] thread exiting
-[DOOR] thread exiting
-Goodbye.
-```
+| `HoldDoorReopensWhenClosing` | HOLD during CLOSING transitions door back to OPEN |
 
 ## Project structure
 
 ```
 elevatorsim/
-├── elevator.h          # Elevator struct + public API declarations
-├── elevator.cpp        # Thread logic, dispatcher, shutdown
-├── main.cpp            # Interactive CLI
+├── elevator.h          # Elevator struct + public API
+├── elevator.cpp        # Simulation logic (movement, door, shutdown)
+├── main.cpp            # elevator_controller: TCP server + stdin
+├── display.cpp         # elevator_display: TCP client + ASCII renderer
 ├── CMakeLists.txt      # Build definition (fetches Google Test)
-├── tests/
-│   └── test_elevator.cpp
-└── README.md
+└── tests/
+    └── test_elevator.cpp
 ```
