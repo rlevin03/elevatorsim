@@ -2,10 +2,11 @@
 
 #include <condition_variable>
 #include <mutex>
-#include <queue>
+#include <set>
 #include <string>
 
-enum class DoorState { CLOSED, OPENING, OPEN, CLOSING };
+enum class DoorState   { CLOSED, OPENING, OPEN, CLOSING };
+enum class Direction   { UP, DOWN, IDLE };
 
 inline const char* door_state_cstr(DoorState s) {
     switch (s) {
@@ -33,9 +34,11 @@ struct Elevator {
     int door_stay_ms    = 5000;
     int door_close_ms   = 3000;
 
+    Direction direction   = Direction::IDLE;
+
     bool silent = false;
 
-    std::queue<int>         requests;
+    std::set<int>           requests;
     std::mutex              mtx;
     std::condition_variable cv_move;    // wakes movement thread
     std::condition_variable cv_door;    // wakes door thread on arrival

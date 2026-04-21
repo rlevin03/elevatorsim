@@ -33,7 +33,8 @@ TEST(ElevatorState, DefaultConstruction) {
     Elevator e;
     EXPECT_EQ(e.current_floor, 1);
     EXPECT_EQ(e.target_floor,  1);
-    EXPECT_EQ(e.door_state, DoorState::CLOSED);
+    EXPECT_EQ(e.door_state,  DoorState::CLOSED);
+    EXPECT_EQ(e.direction,   Direction::IDLE);
     EXPECT_FALSE(e.at_target);
     EXPECT_FALSE(e.hold_requested);
     EXPECT_TRUE(e.running);
@@ -50,7 +51,7 @@ TEST(RequestFloor, DispatchesImmediatelyWhenIdle) {
     {
         std::lock_guard lock{e.mtx};
         EXPECT_EQ(e.target_floor, 5);
-        EXPECT_TRUE(e.requests.empty());
+        EXPECT_EQ(e.direction, Direction::UP);
     }
 
     shutdown(e);
@@ -70,7 +71,7 @@ TEST(RequestFloor, QueuesWhenElevatorIsBusy) {
     {
         std::lock_guard lock{e.mtx};
         EXPECT_EQ(e.requests.size(), 1u);
-        EXPECT_EQ(e.requests.front(), 7);
+        EXPECT_EQ(*e.requests.begin(), 7);
     }
 
     shutdown(e);
@@ -129,20 +130,87 @@ TEST(Simulation, GracefulShutdownUnblocksThreads) {
     EXPECT_FALSE(e.running);
 }
 
+// Requests floors above and below from a mid position — SCAN should serve
+// the upper floor first (continuing UP), then reverse and serve the lower.
+TEST(Simulation, ScanReversesDirection) {
+    Elevator e;
+    auto [tm, td] = make_elevator(e);
+
+    // Get to a mid floor first.
+    request_floor(e, 5);
+    ASSERT_TRUE(wait_idle(e)) << "timed out reaching floor 5";
+
+    // From floor 5 going up, queue both a higher and lower floor.
+    request_floor(e, 8);  // dispatched immediately: target=8, direction=UP
+    request_floor(e, 2);  // queued — SCAN should serve 8 first, then reverse to 2
+
+    ASSERT_TRUE(wait_idle(e)) << "timed out after reverse";
+
+    {
+        std::lock_guard lock{e.mtx};
+        EXPECT_EQ(e.current_floor, 2);
+        EXPECT_TRUE(e.requests.empty());
+    }
+
+    shutdown(e);
+    tm.join();
+    td.join();
+}
+
+// Queue a floor that lies between the start and the original target —
+// SCAN must stop there on the way rather than skipping it.
+TEST(Simulation, ScanStopsAtIntermediateFloor) {
+    Elevator e;
+    auto [tm, td] = make_elevator(e);
+
+    request_floor(e, 7);  // dispatched: target=7, direction=UP, requests={7}
+    request_floor(e, 4);  // queued: requests={4,7} — elevator stops at 4 on the way
+
+    // Verify the elevator actually opens doors at floor 4.
+    {
+        std::unique_lock lock{e.mtx};
+        bool stopped = e.cv_changed.wait_for(lock, 3s, [&] {
+            return e.current_floor == 4 && e.door_state != DoorState::CLOSED;
+        });
+        EXPECT_TRUE(stopped) << "elevator did not stop at intermediate floor 4";
+    }
+
+    // After serving 4, should continue and ultimately reach 7.
+    ASSERT_TRUE(wait_idle(e)) << "elevator did not complete to floor 7";
+
+    {
+        std::lock_guard lock{e.mtx};
+        EXPECT_EQ(e.current_floor, 7);
+    }
+
+    shutdown(e);
+    tm.join();
+    td.join();
+}
+
+// The invariant: current_floor must not change while doors are not CLOSED.
+// This holds even with SCAN intermediate stops.
 TEST(Invariants, DoorsNeverOpenBetweenFloors) {
     Elevator e;
     auto [tm, td] = make_elevator(e);
 
     request_floor(e, 5);
 
-    bool violation = false;
-    auto deadline  = std::chrono::steady_clock::now() + 3s;
+    bool violation      = false;
+    int  floor_at_open  = -1;
+    auto deadline       = std::chrono::steady_clock::now() + 3s;
 
     while (std::chrono::steady_clock::now() < deadline) {
         {
             std::lock_guard lock{e.mtx};
-            if (e.door_state != DoorState::CLOSED && e.current_floor != e.target_floor)
-                violation = true;
+            if (e.door_state != DoorState::CLOSED) {
+                if (floor_at_open == -1)
+                    floor_at_open = e.current_floor;
+                else if (e.current_floor != floor_at_open)
+                    violation = true;
+            } else {
+                floor_at_open = -1;
+            }
             if (e.requests.empty() && e.current_floor == e.target_floor
                     && e.door_state == DoorState::CLOSED)
                 break;
@@ -154,14 +222,14 @@ TEST(Invariants, DoorsNeverOpenBetweenFloors) {
     tm.join();
     td.join();
 
-    EXPECT_FALSE(violation) << "doors were not CLOSED while elevator was between floors";
+    EXPECT_FALSE(violation) << "elevator floor changed while doors were not CLOSED";
 }
 
 TEST(DoorBehavior, CloseDoorSkipsDwell) {
     Elevator e;
     e.floor_travel_ms = 20;
     e.door_open_ms    = 10;
-    e.door_stay_ms    = 5000; // long dwell — close_door should cut it short
+    e.door_stay_ms    = 5000;
     e.door_close_ms   = 20;
     e.silent          = true;
     auto tm = std::thread(run_movement, std::ref(e));
